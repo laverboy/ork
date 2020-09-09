@@ -3,14 +3,16 @@ package main
 import (
 	"bufio"
 	"context"
+	"errors"
 	"fmt"
 	"github.com/docker/docker/api/types"
-	"github.com/docker/docker/api/types/container"
 	"github.com/docker/docker/api/types/network"
 	"github.com/docker/docker/client"
 	"github.com/docker/docker/pkg/stdcopy"
 	"io"
+	"io/ioutil"
 	"log"
+	"net/http"
 	"ork/utils"
 	"os"
 	"os/signal"
@@ -27,7 +29,7 @@ func currentDir() string {
 }
 
 func main() {
-	fmt.Println("and so it begins")
+	fmt.Println("and so it begins...")
 
 	ctx := context.Background()
 	cli, err := client.NewEnvClient()
@@ -41,11 +43,8 @@ func main() {
 	envFile, err := utils.ReadEnvFile()
 	utils.ExitWithErr(err, "ReadEnvFile")
 
-	localstackContainer, err := cli.ContainerCreate(ctx, &container.Config{
-		Image: "docker.io/localstack/localstack", // add docker.io/ to "make it canonical"!
-		Env:   envFile,
-		Tty:   true,
-	}, nil, nil, "")
+	c := localstackContainerConfig(envFile)
+	localstackContainer, err := cli.ContainerCreate(ctx, c.conf, c.hostConf, nil, "")
 	utils.ExitWithErr(err, "create localstack container", envFile)
 
 	captureInterrupt(func() { tidyUp(ctx, cli, localstackContainer.ID, nw.ID) })
@@ -62,18 +61,19 @@ func main() {
 
 	go streamLogs(ctx, cli, localstackContainer.ID)
 
-	// should do wait for it
-	fmt.Println("waiting 10 seconds for localstack to start")
-	time.Sleep(10 * time.Second)
+	if err := waitForIt(); err != nil {
+		tidyUp(ctx, cli, localstackContainer.ID, nw.ID)
+		log.Fatalln("Localstack did not start in time", err)
+	}
 
-	// setup
+	fmt.Println("running setup...")
 	setupLogs, err := runContainer(ctx, cli, nw, setupContainerConfig(envFile))
 	if err != nil {
 		tidyUp(ctx, cli, localstackContainer.ID, nw.ID)
 		log.Fatalln("Running setup error", err)
 	}
 
-	// tests
+	fmt.Println("running tests...")
 	testLogs, err := runContainer(ctx, cli, nw, testContainerConfig(envFile))
 	if err != nil {
 		tidyUp(ctx, cli, localstackContainer.ID, nw.ID)
@@ -96,6 +96,30 @@ func main() {
 	fmt.Println("===================================================")
 	stdcopy.StdCopy(os.Stdout, os.Stderr, testLogs)
 	fmt.Println("===================================================")
+}
+
+func waitForIt() error {
+	timeout := time.After(15 * time.Second)
+	tick := time.Tick(500 * time.Millisecond)
+	for {
+		select {
+		case <-timeout:
+			return errors.New("timed out")
+		case <-tick:
+			c := http.Client{Timeout: 400 * time.Millisecond}
+			resp, err := c.Get("http://localhost:4566/status")
+			if err != nil {
+				// this is normal, because the web host takes time to start
+				fmt.Println("unable to talk to localstack yet")
+				continue
+			}
+			bytes, _ := ioutil.ReadAll(resp.Body)
+			if string(bytes) == `{"status": "running"}` {
+				fmt.Println("localstack ready")
+				return nil
+			}
+		}
+	}
 }
 
 func streamLogs(ctx context.Context, cli *client.Client, localstackContainerID string) {

@@ -4,17 +4,41 @@ import (
 	"fmt"
 	"github.com/docker/docker/api/types/container"
 	"github.com/docker/docker/api/types/mount"
+	"github.com/docker/go-connections/nat"
 	"go/build"
 )
 
 type ContainerHostConfig struct {
-	conf *container.Config
+	conf     *container.Config
 	hostConf *container.HostConfig
+}
+
+func localstackContainerConfig(envConfig []string) ContainerHostConfig {
+	return ContainerHostConfig{
+		conf: &container.Config{
+			Image: "docker.io/localstack/localstack", // add docker.io/ to "make it canonical"!
+			Env:   envConfig,
+			Tty:   true,
+			ExposedPorts: nat.PortSet{
+				"4566/tcp": struct{}{},
+			},
+		},
+		hostConf: &container.HostConfig{
+			PortBindings: nat.PortMap{
+				"4566/tcp": []nat.PortBinding{
+					{
+						HostIP:   "0.0.0.0",
+						HostPort: "4566",
+					},
+				},
+			},
+		},
+	}
 }
 
 func setupContainerConfig(envConfig []string) ContainerHostConfig {
 	return ContainerHostConfig{
-		conf: 	&container.Config{
+		conf: &container.Config{
 			Image:      "docker.io/mesosphere/aws-cli", // add docker.io/ to "make it canonical"!
 			Env:        envConfig,
 			Cmd:        []string{"setup.sh"},
