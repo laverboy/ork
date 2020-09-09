@@ -1,18 +1,14 @@
 package main
 
 import (
-	"bufio"
 	"context"
-	"errors"
 	"fmt"
 	"github.com/docker/docker/api/types"
 	"github.com/docker/docker/api/types/network"
 	"github.com/docker/docker/client"
 	"github.com/docker/docker/pkg/stdcopy"
 	"io"
-	"io/ioutil"
 	"log"
-	"net/http"
 	"ork/utils"
 	"os"
 	"os/signal"
@@ -96,46 +92,6 @@ func main() {
 	fmt.Println("===================================================")
 	stdcopy.StdCopy(os.Stdout, os.Stderr, testLogs)
 	fmt.Println("===================================================")
-}
-
-func waitForIt() error {
-	timeout := time.After(15 * time.Second)
-	tick := time.Tick(500 * time.Millisecond)
-	for {
-		select {
-		case <-timeout:
-			return errors.New("timed out")
-		case <-tick:
-			c := http.Client{Timeout: 400 * time.Millisecond}
-			resp, err := c.Get("http://localhost:4566/status")
-			if err != nil {
-				// this is normal, because the web host takes time to start
-				fmt.Println("unable to talk to localstack yet")
-				continue
-			}
-			bytes, _ := ioutil.ReadAll(resp.Body)
-			if string(bytes) == `{"status": "running"}` {
-				fmt.Println("localstack ready")
-				return nil
-			}
-		}
-	}
-}
-
-func streamLogs(ctx context.Context, cli *client.Client, localstackContainerID string) {
-	func() {
-		reader, err := cli.ContainerLogs(ctx, localstackContainerID, types.ContainerLogsOptions{ShowStdout: true, ShowStderr: true, Follow: true})
-		if err != nil {
-			log.Println("unable to get logs")
-			return
-		}
-		defer reader.Close()
-
-		scanner := bufio.NewScanner(reader)
-		for scanner.Scan() {
-			fmt.Println(scanner.Text())
-		}
-	}()
 }
 
 func captureInterrupt(f func()) {

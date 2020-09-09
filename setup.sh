@@ -7,5 +7,5 @@ aws --endpoint-url=${S3_URL} s3api put-bucket-acl --bucket ${ENVIRONMENT}-cec-ar
 
 aws --endpoint-url=${S3_URL} s3 sync /var/empty s3://${ENVIRONMENT}-cec-artifact  --delete
 
-aws --endpoint-url=${S3_URL} s3 cp client-content.json s3://${ENVIRONMENT}-client-bucket/client-content.json --content-type application/json
+aws --endpoint-url=${S3_URL} s3 cp client-content.json s3://${ENVIRONMENT}-cec-artifact/client-content.json --content-type application/json
 echo "setup complete"
