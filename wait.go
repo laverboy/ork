@@ -18,7 +18,9 @@ func waitForIt(seconds int) error {
 			return errors.New("timed out")
 		case <-tick:
 			c := http.Client{Timeout: 400 * time.Millisecond}
-			resp, err := c.Get("http://localhost:4566/health?reload")
+			req, err := http.NewRequest("GET", "http://localhost:4566/health", nil)
+			req.Header.Set("Content-type", "application/json")
+			resp, err := c.Do(req)
 			if err != nil {
 				continue
 			}

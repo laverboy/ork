@@ -26,8 +26,12 @@ func currentDir() string {
 	return wd
 }
 
+func info(msg string) {
+	log.Println(fmt.Sprintf("\033[1;33m%s\033[0m", msg))
+}
+
 func main() {
-	fmt.Println("and so it begins...")
+	info("and so it begins...")
 
 	if err := buildLambda(); err != nil {
 		utils.ExitWithErr(err, "buildLambda")
@@ -70,20 +74,20 @@ func main() {
 	go streamLogs(ctx, cli, localstackContainer.ID)
 
 	// wait for localstack to be ready
-	fmt.Println("waiting upto 30s for localstack to start")
+	info("waiting upto 30s for localstack to start")
 	if err := waitForIt(30); err != nil {
 		tidyUp(ctx, cli, localstackContainer.ID, nw.ID)
 		log.Fatalln("Localstack did not start in time", err)
 	}
 
-	fmt.Println("running setup...")
+	info("running setup...")
 	setupLogs, err := runContainer(ctx, cli, nw, setupContainerConfig(envFile))
 	if err != nil {
 		tidyUp(ctx, cli, localstackContainer.ID, nw.ID)
 		log.Fatalln("Running setup error", err)
 	}
 
-	fmt.Println("running tests...")
+	info("running tests...")
 	testLogs, err := runContainer(ctx, cli, nw, testContainerConfig(envFile))
 	if err != nil {
 		tidyUp(ctx, cli, localstackContainer.ID, nw.ID)
@@ -94,18 +98,18 @@ func main() {
 
 	fmt.Println("")
 	fmt.Println("")
-	fmt.Println("===================================================")
-	fmt.Println("====== Setup ======================================")
-	fmt.Println("===================================================")
+	fmt.Println("==========================================================================================")
+	fmt.Println("====== Setup =============================================================================")
+	fmt.Println("==========================================================================================")
 	stdcopy.StdCopy(os.Stdout, os.Stderr, setupLogs)
 	fmt.Println("")
 	fmt.Println("")
 
-	fmt.Println("===================================================")
-	fmt.Println("====== Test =======================================")
-	fmt.Println("===================================================")
+	fmt.Println("==========================================================================================")
+	fmt.Println("====== Test ==============================================================================")
+	fmt.Println("==========================================================================================")
 	stdcopy.StdCopy(os.Stdout, os.Stderr, testLogs)
-	fmt.Println("===================================================")
+	fmt.Println("==========================================================================================")
 }
 
 func buildLambda() error {
@@ -138,7 +142,7 @@ func buildLambda() error {
 		files = append(files, "cosmos")
 	}
 
-	if err := ZipFiles("lambda.zip", files); err != nil {
+	if err := utils.ZipFiles("lambda.zip", files); err != nil {
 		return fmt.Errorf("error zipping files: %w", err)
 	}
 	fmt.Println("zipped")
@@ -164,6 +168,12 @@ func tidyUp(ctx context.Context, cli *client.Client, localstackContainerID, netw
 	}
 	if err := cli.NetworkRemove(ctx, networkID); err != nil {
 		log.Println("unable to stop network", err)
+	}
+	if err := os.Remove("lambda.zip"); err != nil {
+		log.Println("unable to remove lambda zip")
+	}
+	if err := os.Remove("../app/handler"); err != nil {
+		log.Println("unable to remove handler")
 	}
 }
 
