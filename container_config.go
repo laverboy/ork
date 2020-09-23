@@ -24,6 +24,18 @@ func localstackContainerConfig(envConfig []string) ContainerHostConfig {
 			},
 		},
 		hostConf: &container.HostConfig{
+			Mounts: []mount.Mount{
+				{
+					Type:   mount.TypeBind,
+					Source: fmt.Sprintf("%s/.localstack", currentDir()),
+					Target: "/tmp/localstack",
+				},
+				{
+					Type:   mount.TypeBind,
+					Source: "/var/run/docker.sock",
+					Target: "/var/run/docker.sock",
+				},
+			},
 			PortBindings: nat.PortMap{
 				"4566/tcp": []nat.PortBinding{
 					{

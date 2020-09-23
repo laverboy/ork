@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"github.com/docker/docker/api/types"
 	"github.com/docker/docker/api/types/network"
@@ -11,6 +12,7 @@ import (
 	"log"
 	"ork/utils"
 	"os"
+	"os/exec"
 	"os/signal"
 	"syscall"
 	"time"
@@ -27,40 +29,52 @@ func currentDir() string {
 func main() {
 	fmt.Println("and so it begins...")
 
+	if err := buildLambda(); err != nil {
+		utils.ExitWithErr(err, "buildLambda")
+	}
+
 	ctx := context.Background()
 	cli, err := client.NewEnvClient()
 	utils.ExitWithErr(err, "NewEnvClient")
 
 	// create random network to hold it all together
-	nw, err := cli.NetworkCreate(ctx, utils.RandomHex(4), types.NetworkCreate{})
+	networkName := utils.RandomHex(4)
+	nw, err := cli.NetworkCreate(ctx, networkName, types.NetworkCreate{})
 	utils.ExitWithErr(err, "NetworkCreate")
 
 	// read env file, to be passed to containers
 	envFile, err := utils.ReadEnvFile()
 	utils.ExitWithErr(err, "ReadEnvFile")
 
+	envFile = append(envFile, fmt.Sprintf("LAMBDA_DOCKER_NETWORK=%s", networkName))
+
+	// create main localstack container
 	c := localstackContainerConfig(envFile)
 	localstackContainer, err := cli.ContainerCreate(ctx, c.conf, c.hostConf, nil, "")
 	utils.ExitWithErr(err, "create localstack container", envFile)
 
+	// ensure from now on ctrl-c kills localstack
 	captureInterrupt(func() { tidyUp(ctx, cli, localstackContainer.ID, nw.ID) })
 
+	// connect localstack to container
 	if err := cli.NetworkConnect(ctx, nw.ID, localstackContainer.ID, &network.EndpointSettings{Aliases: []string{"localstack"}}); err != nil {
 		tidyUp(ctx, cli, localstackContainer.ID, nw.ID)
 		log.Fatalln("NetworkConnect error", err)
 	}
 
+	// start localstack
 	if err := cli.ContainerStart(ctx, localstackContainer.ID, types.ContainerStartOptions{}); err != nil {
 		tidyUp(ctx, cli, localstackContainer.ID, nw.ID)
 		log.Fatalln("NetworkConnect error", err)
 	}
-
 	go streamLogs(ctx, cli, localstackContainer.ID)
 
-	if err := waitForIt(); err != nil {
-		tidyUp(ctx, cli, localstackContainer.ID, nw.ID)
-		log.Fatalln("Localstack did not start in time", err)
-	}
+	// wait for localstack to be ready
+	//if err := waitForIt(); err != nil {
+	//	tidyUp(ctx, cli, localstackContainer.ID, nw.ID)
+	//	log.Fatalln("Localstack did not start in time", err)
+	//}
+	time.Sleep(20 * time.Second)
 
 	fmt.Println("running setup...")
 	setupLogs, err := runContainer(ctx, cli, nw, setupContainerConfig(envFile))
@@ -92,6 +106,44 @@ func main() {
 	fmt.Println("===================================================")
 	stdcopy.StdCopy(os.Stdout, os.Stderr, testLogs)
 	fmt.Println("===================================================")
+}
+
+func buildLambda() error {
+	// if app dir does not exist escape
+	if _, err := os.Stat("../app"); os.IsNotExist(err) {
+		return errors.New("app dir does not exist")
+	}
+
+	home, _ := os.UserHomeDir()
+
+	fmt.Println("building lambda handler")
+	cmd := exec.Command("go", "build", "-o", "handler")
+	cmd.Dir = "../app"
+	cmd.Env = []string{"GOOS=linux", "GOARCH=amd64", "HOME=" + home}
+	cmd.Stderr = os.Stderr
+	cmd.Stdout = os.Stdout
+	if err := cmd.Run(); err != nil {
+		return fmt.Errorf("error running go build: %w", err)
+	}
+
+	// add handler and possibly app/resources and integration-tests/cosmos to zip file
+	fmt.Println("zipping")
+	files := []string{"../app/handler"}
+
+	if _, err := os.Stat("../app/resources"); !os.IsNotExist(err) {
+		files = append(files, "../app/resources")
+	}
+
+	if _, err := os.Stat("cosmos"); !os.IsNotExist(err) {
+		files = append(files, "cosmos")
+	}
+
+	if err := ZipFiles("lambda.zip", files); err != nil {
+		return fmt.Errorf("error zipping files: %w", err)
+	}
+	fmt.Println("zipped")
+
+	return nil
 }
 
 func captureInterrupt(f func()) {
