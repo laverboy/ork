@@ -70,11 +70,11 @@ func main() {
 	go streamLogs(ctx, cli, localstackContainer.ID)
 
 	// wait for localstack to be ready
-	//if err := waitForIt(); err != nil {
-	//	tidyUp(ctx, cli, localstackContainer.ID, nw.ID)
-	//	log.Fatalln("Localstack did not start in time", err)
-	//}
-	time.Sleep(20 * time.Second)
+	fmt.Println("waiting upto 30s for localstack to start")
+	if err := waitForIt(30); err != nil {
+		tidyUp(ctx, cli, localstackContainer.ID, nw.ID)
+		log.Fatalln("Localstack did not start in time", err)
+	}
 
 	fmt.Println("running setup...")
 	setupLogs, err := runContainer(ctx, cli, nw, setupContainerConfig(envFile))
@@ -119,7 +119,7 @@ func buildLambda() error {
 	fmt.Println("building lambda handler")
 	cmd := exec.Command("go", "build", "-o", "handler")
 	cmd.Dir = "../app"
-	cmd.Env = []string{"GOOS=linux", "GOARCH=amd64", "HOME=" + home}
+	cmd.Env = []string{"GOOS=linux", "GOARCH=amd64", "CGO_ENABLED=0", "HOME=" + home}
 	cmd.Stderr = os.Stderr
 	cmd.Stdout = os.Stdout
 	if err := cmd.Run(); err != nil {
