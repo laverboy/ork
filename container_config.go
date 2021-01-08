@@ -27,11 +27,6 @@ func localstackContainerConfig(envConfig []string) ContainerHostConfig {
 			Mounts: []mount.Mount{
 				{
 					Type:   mount.TypeBind,
-					Source: fmt.Sprintf("%s/.localstack", currentDir()),
-					Target: "/tmp/localstack",
-				},
-				{
-					Type:   mount.TypeBind,
 					Source: "/var/run/docker.sock",
 					Target: "/var/run/docker.sock",
 				},

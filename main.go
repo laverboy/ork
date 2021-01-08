@@ -30,7 +30,7 @@ func info(msg string) {
 	log.Println(fmt.Sprintf("\033[1;33m%s\033[0m", msg))
 }
 
-func main() {
+func theStuff() int {
 	info("and so it begins...")
 
 	if err := buildLambda(); err != nil {
@@ -57,18 +57,18 @@ func main() {
 	localstackContainer, err := cli.ContainerCreate(ctx, c.conf, c.hostConf, nil, "")
 	utils.ExitWithErr(err, "create localstack container", envFile)
 
+	defer tidyUp(ctx, cli, localstackContainer.ID, nw.ID)
+
 	// ensure from now on ctrl-c kills localstack
-	captureInterrupt(func() { tidyUp(ctx, cli, localstackContainer.ID, nw.ID) })
+	captureInterrupt()
 
 	// connect localstack to container
 	if err := cli.NetworkConnect(ctx, nw.ID, localstackContainer.ID, &network.EndpointSettings{Aliases: []string{"localstack"}}); err != nil {
-		tidyUp(ctx, cli, localstackContainer.ID, nw.ID)
 		log.Fatalln("NetworkConnect error", err)
 	}
 
 	// start localstack
 	if err := cli.ContainerStart(ctx, localstackContainer.ID, types.ContainerStartOptions{}); err != nil {
-		tidyUp(ctx, cli, localstackContainer.ID, nw.ID)
 		log.Fatalln("NetworkConnect error", err)
 	}
 	go streamLogs(ctx, cli, localstackContainer.ID)
@@ -76,25 +76,29 @@ func main() {
 	// wait for localstack to be ready
 	info("waiting upto 30s for localstack to start")
 	if err := waitForIt(30); err != nil {
-		tidyUp(ctx, cli, localstackContainer.ID, nw.ID)
 		log.Fatalln("Localstack did not start in time", err)
 	}
 
 	info("running setup...")
-	setupLogs, err := runContainer(ctx, cli, nw, setupContainerConfig(envFile))
+	setupLogs, err, _ := runContainer(ctx, cli, nw, setupContainerConfig(envFile))
 	if err != nil {
-		tidyUp(ctx, cli, localstackContainer.ID, nw.ID)
 		log.Fatalln("Running setup error", err)
 	}
 
 	info("running tests...")
-	testLogs, err := runContainer(ctx, cli, nw, testContainerConfig(envFile))
+	testLogs, err, statusCode := runContainer(ctx, cli, nw, testContainerConfig(envFile))
 	if err != nil {
-		tidyUp(ctx, cli, localstackContainer.ID, nw.ID)
 		log.Fatalln("Running tests error", err)
 	}
 
-	tidyUp(ctx, cli, localstackContainer.ID, nw.ID)
+	if _, err := cli.ContainerWait(ctx, localstackContainer.ID); err != nil {
+		timeout := 5 * time.Second // give the container 5s to stop by itself
+		if err := cli.ContainerStop(ctx, localstackContainer.ID, &timeout); err != nil {
+			log.Fatalf("unable to stop localstack container: %v\n", err)
+		}
+
+		log.Fatalf("error waiting for localstack container: %v\n", err)
+	}
 
 	fmt.Println("")
 	fmt.Println("")
@@ -110,6 +114,12 @@ func main() {
 	fmt.Println("==========================================================================================")
 	stdcopy.StdCopy(os.Stdout, os.Stderr, testLogs)
 	fmt.Println("==========================================================================================")
+
+	return statusCode
+}
+
+func main() {
+	os.Exit(theStuff())
 }
 
 func buildLambda() error {
@@ -150,13 +160,12 @@ func buildLambda() error {
 	return nil
 }
 
-func captureInterrupt(f func()) {
+func captureInterrupt() {
 	c := make(chan os.Signal)
 	signal.Notify(c, os.Interrupt, syscall.SIGTERM)
 	go func() {
 		<-c
 		fmt.Println("\r- Ctrl+C pressed in Terminal")
-		f()
 		os.Exit(1)
 	}()
 }
@@ -177,33 +186,34 @@ func tidyUp(ctx context.Context, cli *client.Client, localstackContainerID, netw
 	}
 }
 
-func runContainer(ctx context.Context, cli *client.Client, nw types.NetworkCreateResponse, c ContainerHostConfig) (io.ReadCloser, error) {
+func runContainer(ctx context.Context, cli *client.Client, nw types.NetworkCreateResponse, c ContainerHostConfig) (io.ReadCloser, error, int) {
 	cont, err := cli.ContainerCreate(ctx, c.conf, c.hostConf, nil, "")
 	if err != nil {
-		return nil, fmt.Errorf("error creating container: %w", err)
+		return nil, fmt.Errorf("error creating container: %w", err), 0
 	}
 
 	if err := cli.NetworkConnect(ctx, nw.ID, cont.ID, nil); err != nil {
-		return nil, fmt.Errorf("error connecting to network: %w", err)
+		return nil, fmt.Errorf("error connecting to network: %w", err), 0
 	}
 
 	if err := cli.ContainerStart(ctx, cont.ID, types.ContainerStartOptions{}); err != nil {
-		return nil, fmt.Errorf("error starting container: %w", err)
+		return nil, fmt.Errorf("error starting container: %w", err), 0
 	}
 
-	if _, err := cli.ContainerWait(ctx, cont.ID); err != nil {
+	status, err := cli.ContainerWait(ctx, cont.ID)
+	if err != nil {
 		timeout := 5 * time.Second // give the container 5s to stop by itself
 		if err := cli.ContainerStop(ctx, cont.ID, &timeout); err != nil {
-			return nil, fmt.Errorf("unable to stop container: %w", err)
+			return nil, fmt.Errorf("unable to stop container: %w", err), 0
 		}
 
-		return nil, fmt.Errorf("error waiting for container: %w", err)
+		return nil, fmt.Errorf("error waiting for container: %w", err), 0
 	}
 
 	logs, err := cli.ContainerLogs(ctx, cont.ID, types.ContainerLogsOptions{ShowStdout: true, ShowStderr: true})
 	if err != nil {
-		return nil, fmt.Errorf("error getting container logs: %w", err)
+		return nil, fmt.Errorf("error getting container logs: %w", err), 0
 	}
 
-	return logs, nil
+	return logs, nil, int(status)
 }
