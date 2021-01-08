@@ -53,7 +53,6 @@ func theStuff() int {
 	defer removeLocalStackWait()
 
 	info("starting localstack...")
-
 	out, err := NewLocalStackDockerCMD(networkName).CombinedOutput()
 	if err != nil {
 		fmt.Printf("unable to get localstack-wait: %v, \noutput:\n%s", err, out)
@@ -75,7 +74,6 @@ func theStuff() int {
 		fmt.Printf("failed to setup localstack: %v, \noutput:\n%s", err, out)
 		return 7
 	}
-
 	fmt.Printf("localstack setup successfully: \n%s", out)
 
 	info("running test...")
@@ -85,6 +83,11 @@ func theStuff() int {
 		return 8
 	}
 
+	info("localstack logs...")
+	logs, _ := exec.Command("docker", "logs", localStackContainerID).CombinedOutput()
+	fmt.Printf("localstack logs: \n%s\n", logs)
+
+	info("test results...")
 	fmt.Printf("test ran successfully: \n%s", out)
 
 	return 0
@@ -102,7 +105,7 @@ func NewLocalStackDockerCMD(networkName string) *exec.Cmd {
 		"--detach",
 		"--network", networkName,
 		"--network-alias", "localstack",
-		"-e", fmt.Sprintf("\"LAMBDA_DOCKER_NETWORK=%s\"", networkName),
+		"-e", fmt.Sprintf("LAMBDA_DOCKER_NETWORK=%s", networkName),
 		"--env-file", ".env",
 		"-v", fmt.Sprintf("%s/localstack-wait:/usr/local/bin/localstack-wait", os.Getenv("PWD")),
 		"-v", fmt.Sprintf("%s/.localstack:/tmp/localstack", os.Getenv("PWD")),
@@ -138,15 +141,15 @@ func NewRunTestDockerCMD(networkName string) *exec.Cmd {
 	return exec.Command("docker", "run", "--rm",
 		"--network", networkName,
 		"--env-file", ".env",
-		"-network-alias", "test-runner.local",
+		"--network-alias", "test-runner.local",
 		"-v", fmt.Sprintf("%s:/var/lib/jenkins/.ssh/id_rsa", sshDir),
 		"-v", fmt.Sprintf("%s:/var/lib/jenkins/.cache/go-build", goCacheDir),
 		"-v", fmt.Sprintf("%s:/go", goDir),
-		"-v", fmt.Sprintf("%s/:/usr/src/service", os.Getenv("PWD")),
+		"-v", fmt.Sprintf("%s:/usr/src/service", os.Getenv("PWD")),
 		"-w", "/usr/src/service",
 		"-u", "jenkins",
 		"010894407141.dkr.ecr.eu-west-1.amazonaws.com/build-container/docker-go:latest",
-		"go test",
+		"go", "test",
 	)
 }
 func killLocalStackContainer(id string) {
@@ -221,12 +224,10 @@ func buildLambda() error {
 		return errors.New("app dir does not exist")
 	}
 
-	home, _ := os.UserHomeDir()
-
 	fmt.Println("building lambda handler")
 	cmd := exec.Command("go", "build", "-o", "handler")
 	cmd.Dir = "../app"
-	cmd.Env = []string{"GOOS=linux", "GOARCH=amd64", "CGO_ENABLED=0", "HOME=" + home}
+	cmd.Env = append(os.Environ(), "GOOS=linux", "GOARCH=amd64", "CGO_ENABLED=0")
 	cmd.Stderr = os.Stderr
 	cmd.Stdout = os.Stdout
 	if err := cmd.Run(); err != nil {
