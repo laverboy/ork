@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"os/signal"
+	"runtime"
 	"strings"
 	"syscall"
 )
@@ -168,12 +169,14 @@ func killLocalStackContainer(id string) {
 }
 
 func removeLambda() {
+	fmt.Println("removing lambda.zip")
 	if err := os.Remove("lambda.zip"); err != nil {
 		log.Println("unable to remove lambda.zip")
 	}
 }
 
 func removeLocalStackWait() {
+	fmt.Println("removing localstack-wait")
 	if err := os.Remove("localstack-wait"); err != nil {
 		log.Println("unable to remove localstack-wait")
 	}
@@ -207,6 +210,7 @@ func createNetwork(name string) error {
 }
 
 func removeNetwork(name string) {
+	fmt.Println("removing network")
 	cmd := exec.Command("docker", "network", "rm", name)
 	out, err := cmd.CombinedOutput()
 	if err != nil {
@@ -260,6 +264,6 @@ func captureInterrupt() {
 	go func() {
 		<-c
 		fmt.Println("\r- Ctrl+C pressed in Terminal")
-		os.Exit(1)
+		runtime.Goexit()
 	}()
 }
