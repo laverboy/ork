@@ -78,6 +78,15 @@ func theStuff() int {
 
 	fmt.Printf("localstack setup successfully: \n%s", out)
 
+	info("running test...")
+	out, err = NewRunTestDockerCMD(networkName).CombinedOutput()
+	if err != nil {
+		fmt.Printf("test failed or errored: %v, \noutput:\n%s", err, out)
+		return 8
+	}
+
+	fmt.Printf("test ran successfully: \n%s", out)
+
 	return 0
 }
 
@@ -114,6 +123,32 @@ func NewLocalStackSetupDockerCMD(networkName string) *exec.Cmd {
 	)
 }
 
+func NewRunTestDockerCMD(networkName string) *exec.Cmd {
+	sshKeyLocation, ok := os.LookupEnv("SSH_KEY_LOCATION")
+	var sshDir string
+	if ok {
+		sshDir = fmt.Sprintf("%s/.ssh/id_rsa", os.Getenv("HOME"))
+	} else {
+		sshDir = sshKeyLocation
+	}
+
+	goDir := fmt.Sprintf("%s/go", os.Getenv("HOME"))
+	goCacheDir := fmt.Sprintf("%s/go-cache", os.Getenv("HOME"))
+
+	return exec.Command("docker", "run", "--rm",
+		"--network", networkName,
+		"--env-file", ".env",
+		"-network-alias", "test-runner.local",
+		"-v", fmt.Sprintf("%s:/var/lib/jenkins/.ssh/id_rsa", sshDir),
+		"-v", fmt.Sprintf("%s:/var/lib/jenkins/.cache/go-build", goCacheDir),
+		"-v", fmt.Sprintf("%s:/go", goDir),
+		"-v", fmt.Sprintf("%s/:/usr/src/service", os.Getenv("PWD")),
+		"-w", "/usr/src/service",
+		"-u", "jenkins",
+		"010894407141.dkr.ecr.eu-west-1.amazonaws.com/build-container/docker-go:latest",
+		"go test",
+	)
+}
 func killLocalStackContainer(id string) {
 	fmt.Println("killing localstack")
 	cmd := exec.Command("docker", "container", "kill", id)
