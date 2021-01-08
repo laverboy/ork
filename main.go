@@ -1,21 +1,15 @@
 package main
 
 import (
-	"context"
 	"errors"
 	"fmt"
-	"github.com/docker/docker/api/types"
-	"github.com/docker/docker/api/types/network"
-	"github.com/docker/docker/client"
-	"github.com/docker/docker/pkg/stdcopy"
-	"io"
 	"log"
 	"ork/utils"
 	"os"
 	"os/exec"
 	"os/signal"
+	"strings"
 	"syscall"
-	"time"
 )
 
 func currentDir() string {
@@ -34,88 +28,152 @@ func theStuff() int {
 	info("and so it begins...")
 
 	if err := buildLambda(); err != nil {
-		utils.ExitWithErr(err, "buildLambda")
+		fmt.Println(err, "buildLambda")
+		return 1
 	}
+	defer removeLambda()
 
-	ctx := context.Background()
-	cli, err := client.NewEnvClient()
-	utils.ExitWithErr(err, "NewEnvClient")
+	// ensure from now on ctrl-c kills process
+	captureInterrupt()
 
 	// create random network to hold it all together
 	networkName := utils.RandomHex(4)
-	nw, err := cli.NetworkCreate(ctx, networkName, types.NetworkCreate{})
-	utils.ExitWithErr(err, "NetworkCreate")
 
-	// read env file, to be passed to containers
-	envFile, err := utils.ReadEnvFile()
-	utils.ExitWithErr(err, "ReadEnvFile")
-
-	envFile = append(envFile, fmt.Sprintf("LAMBDA_DOCKER_NETWORK=%s", networkName))
-
-	// create main localstack container
-	c := localstackContainerConfig(envFile)
-	localstackContainer, err := cli.ContainerCreate(ctx, c.conf, c.hostConf, nil, "")
-	utils.ExitWithErr(err, "create localstack container", envFile)
-
-	defer tidyUp(ctx, cli, localstackContainer.ID, nw.ID)
-
-	// ensure from now on ctrl-c kills localstack
-	captureInterrupt()
-
-	// connect localstack to container
-	if err := cli.NetworkConnect(ctx, nw.ID, localstackContainer.ID, &network.EndpointSettings{Aliases: []string{"localstack"}}); err != nil {
-		log.Fatalln("NetworkConnect error", err)
+	// create docker network
+	if err := createNetwork(networkName); err != nil {
+		fmt.Println(err)
+		return 2
 	}
+	defer removeNetwork(networkName)
 
-	// start localstack
-	if err := cli.ContainerStart(ctx, localstackContainer.ID, types.ContainerStartOptions{}); err != nil {
-		log.Fatalln("NetworkConnect error", err)
+	if err := getLocalStackWait(); err != nil {
+		fmt.Println(err)
+		return 2
 	}
-	go streamLogs(ctx, cli, localstackContainer.ID)
+	defer removeLocalStackWait()
 
-	// wait for localstack to be ready
-	info("waiting upto 30s for localstack to start")
-	if err := waitForIt(30); err != nil {
-		log.Fatalln("Localstack did not start in time", err)
+	info("starting localstack...")
+
+	out, err := NewLocalStackDockerCMD(networkName).CombinedOutput()
+	if err != nil {
+		fmt.Printf("unable to get localstack-wait: %v, \noutput:\n%s", err, out)
+		return 3
+	}
+	var localStackContainerID = strings.TrimSpace(string(out))
+	defer killLocalStackContainer(localStackContainerID)
+
+	info("waiting for localstack to be ready...")
+	out, err = NewWaitForLocalStackDockerCMD(localStackContainerID).CombinedOutput()
+	if err != nil {
+		fmt.Printf("failed to launch localstack: %v, \noutput:\n%s", err, out)
+		return 5
 	}
 
 	info("running setup...")
-	setupLogs, err, _ := runContainer(ctx, cli, nw, setupContainerConfig(envFile))
+	out, err = NewLocalStackSetupDockerCMD(networkName).CombinedOutput()
 	if err != nil {
-		log.Fatalln("Running setup error", err)
+		fmt.Printf("failed to setup localstack: %v, \noutput:\n%s", err, out)
+		return 7
 	}
 
-	info("running tests...")
-	testLogs, err, statusCode := runContainer(ctx, cli, nw, testContainerConfig(envFile))
+	fmt.Printf("localstack setup successfully: \n%s", out)
+
+	return 0
+}
+
+func NewWaitForLocalStackDockerCMD(localStackName string) *exec.Cmd {
+	return exec.Command("docker", "exec", "-t",
+		localStackName,
+		"/usr/local/bin/localstack-wait",
+	)
+}
+
+func NewLocalStackDockerCMD(networkName string) *exec.Cmd {
+	return exec.Command("docker", "run",
+		"--detach",
+		"--network", networkName,
+		"--network-alias", "localstack",
+		"-e", fmt.Sprintf("\"LAMBDA_DOCKER_NETWORK=%s\"", networkName),
+		"--env-file", ".env",
+		"-v", fmt.Sprintf("%s/localstack-wait:/usr/local/bin/localstack-wait", os.Getenv("PWD")),
+		"-v", fmt.Sprintf("%s/.localstack:/tmp/localstack", os.Getenv("PWD")),
+		"-v", "/var/run/docker.sock:/var/run/docker.sock",
+		"localstack/localstack:0.11.6",
+	)
+}
+
+func NewLocalStackSetupDockerCMD(networkName string) *exec.Cmd {
+	return exec.Command("docker", "run", "--rm",
+		"--network", networkName,
+		"--env-file", ".env",
+		"-v", fmt.Sprintf("%s/setup.sh:/usr/local/bin/setup.sh", os.Getenv("PWD")),
+		"-v", fmt.Sprintf("%s/:/usr/src/service", os.Getenv("PWD")),
+		"-w", "/usr/src/service",
+		`--entrypoint`, "/usr/local/bin/setup.sh",
+		"mesosphere/aws-cli",
+	)
+}
+
+func killLocalStackContainer(id string) {
+	fmt.Println("killing localstack")
+	cmd := exec.Command("docker", "container", "kill", id)
+	out, err := cmd.CombinedOutput()
 	if err != nil {
-		log.Fatalln("Running tests error", err)
+		fmt.Printf("failed to kill container %s: error: %s\noutput: %s\n", id, err, out)
 	}
 
-	if _, err := cli.ContainerWait(ctx, localstackContainer.ID); err != nil {
-		timeout := 5 * time.Second // give the container 5s to stop by itself
-		if err := cli.ContainerStop(ctx, localstackContainer.ID, &timeout); err != nil {
-			log.Fatalf("unable to stop localstack container: %v\n", err)
-		}
+	cmd = exec.Command("docker", "container", "rm", id)
+	out, err = cmd.CombinedOutput()
+	if err != nil {
+		fmt.Printf("failed to remove container %s: error: %s\noutput: %s\n", id, err, out)
+	}
+}
 
-		log.Fatalf("error waiting for localstack container: %v\n", err)
+func removeLambda() {
+	if err := os.Remove("lambda.zip"); err != nil {
+		log.Println("unable to remove lambda.zip")
+	}
+}
+
+func removeLocalStackWait() {
+	if err := os.Remove("localstack-wait"); err != nil {
+		log.Println("unable to remove localstack-wait")
+	}
+}
+
+func getLocalStackWait() error {
+	cmd := exec.Command("go", "get", "-u", "github.com/bbc/trb/localstack-wait")
+	cmd.Env = append(os.Environ(), "GONOSUMDB=github.com/bbc/trb,github.com/bbc/cec")
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("unable to get localstack-wait: %v, \noutput:\n%s", err, out)
 	}
 
-	fmt.Println("")
-	fmt.Println("")
-	fmt.Println("==========================================================================================")
-	fmt.Println("====== Setup =============================================================================")
-	fmt.Println("==========================================================================================")
-	stdcopy.StdCopy(os.Stdout, os.Stderr, setupLogs)
-	fmt.Println("")
-	fmt.Println("")
+	cmd = exec.Command("go", "build", "github.com/bbc/trb/localstack-wait")
+	cmd.Env = append(os.Environ(), "GOOS=linux", "GOARCH=amd64", "CGO_ENABLED=0")
+	out, err = cmd.CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("unable to build localstack-wait: %v, \noutput:\n%s", err, out)
+	}
 
-	fmt.Println("==========================================================================================")
-	fmt.Println("====== Test ==============================================================================")
-	fmt.Println("==========================================================================================")
-	stdcopy.StdCopy(os.Stdout, os.Stderr, testLogs)
-	fmt.Println("==========================================================================================")
+	return nil
+}
 
-	return statusCode
+func createNetwork(name string) error {
+	cmd := exec.Command("docker", "network", "create", name)
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("unable to create network: %v, \noutput:\n%s", err, out)
+	}
+	return nil
+}
+
+func removeNetwork(name string) {
+	cmd := exec.Command("docker", "network", "rm", name)
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		fmt.Printf("failed to remove network %s: error: %s\noutput: %s\n", name, err, out)
+	}
 }
 
 func main() {
@@ -168,52 +226,4 @@ func captureInterrupt() {
 		fmt.Println("\r- Ctrl+C pressed in Terminal")
 		os.Exit(1)
 	}()
-}
-
-func tidyUp(ctx context.Context, cli *client.Client, localstackContainerID, networkID string) {
-	timeout := 5 * time.Second // give the container 5s to stop by itself
-	if err := cli.ContainerStop(ctx, localstackContainerID, &timeout); err != nil {
-		log.Println("unable to stop localstack container", err)
-	}
-	if err := cli.NetworkRemove(ctx, networkID); err != nil {
-		log.Println("unable to stop network", err)
-	}
-	if err := os.Remove("lambda.zip"); err != nil {
-		log.Println("unable to remove lambda zip")
-	}
-	if err := os.Remove("../app/handler"); err != nil {
-		log.Println("unable to remove handler")
-	}
-}
-
-func runContainer(ctx context.Context, cli *client.Client, nw types.NetworkCreateResponse, c ContainerHostConfig) (io.ReadCloser, error, int) {
-	cont, err := cli.ContainerCreate(ctx, c.conf, c.hostConf, nil, "")
-	if err != nil {
-		return nil, fmt.Errorf("error creating container: %w", err), 0
-	}
-
-	if err := cli.NetworkConnect(ctx, nw.ID, cont.ID, nil); err != nil {
-		return nil, fmt.Errorf("error connecting to network: %w", err), 0
-	}
-
-	if err := cli.ContainerStart(ctx, cont.ID, types.ContainerStartOptions{}); err != nil {
-		return nil, fmt.Errorf("error starting container: %w", err), 0
-	}
-
-	status, err := cli.ContainerWait(ctx, cont.ID)
-	if err != nil {
-		timeout := 5 * time.Second // give the container 5s to stop by itself
-		if err := cli.ContainerStop(ctx, cont.ID, &timeout); err != nil {
-			return nil, fmt.Errorf("unable to stop container: %w", err), 0
-		}
-
-		return nil, fmt.Errorf("error waiting for container: %w", err), 0
-	}
-
-	logs, err := cli.ContainerLogs(ctx, cont.ID, types.ContainerLogsOptions{ShowStdout: true, ShowStderr: true})
-	if err != nil {
-		return nil, fmt.Errorf("error getting container logs: %w", err), 0
-	}
-
-	return logs, nil, int(status)
 }
