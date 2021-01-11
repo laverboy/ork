@@ -16,7 +16,7 @@ import (
 func currentDir() string {
 	wd, err := os.Getwd()
 	if err != nil {
-		log.Fatal(err)
+		panic(err)
 	}
 	return wd
 }
@@ -153,6 +153,7 @@ func NewRunTestDockerCMD(networkName string) *exec.Cmd {
 		"go", "test",
 	)
 }
+
 func killLocalStackContainer(id string) {
 	fmt.Println("killing localstack")
 	cmd := exec.Command("docker", "container", "kill", id)
