@@ -17,12 +17,13 @@ func removeLambda() {
 }
 
 func buildLambda() error {
+	fmt.Println("building lambda handler")
+
 	// if app dir does not exist escape
 	if _, err := os.Stat("../app"); os.IsNotExist(err) {
 		return errors.New("app dir does not exist")
 	}
 
-	fmt.Println("building lambda handler")
 	cmd := exec.Command("go", "build", "-o", "handler")
 	cmd.Dir = "../app"
 	cmd.Env = append(os.Environ(), "GOOS=linux", "GOARCH=amd64", "CGO_ENABLED=0")

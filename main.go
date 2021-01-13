@@ -21,6 +21,11 @@ func info(msg string) {
 func theStuff() int {
 	info("and so it begins...")
 
+	if err := loginToECR(); err != nil {
+		fmt.Println(err)
+		return 1
+	}
+
 	if err := buildLambda(); err != nil {
 		fmt.Println(err, "buildLambda")
 		return 1
@@ -86,6 +91,23 @@ func theStuff() int {
 
 	info("tidy up...")
 	return 0
+}
+
+func loginToECR() error {
+	fmt.Println("logging in to ecr")
+	cmd := exec.Command("aws", "ecr", "get-login", "--no-include-email", "--region", "eu-west-1")
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("unable to get ecr login: error: %s\noutput: %s\n", err, out)
+	}
+
+	cmd = exec.Command("bash", "-c", string(out))
+	out, err = cmd.CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("unable to login to ecr: error: %s\noutput: %s\n", err, out)
+	}
+
+	return nil
 }
 
 func main() {
