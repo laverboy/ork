@@ -1,6 +1,7 @@
 package main
 
 import (
+	"flag"
 	"fmt"
 	"log"
 	"ork/utils"
@@ -12,7 +13,19 @@ import (
 	"syscall"
 )
 
-var PWD string
+var (
+	remote bool
+	PWD    string
+	HOME   string // for location of go and go cache
+)
+
+func isRemote() bool {
+	return remote
+}
+
+func isLocal() bool {
+	return !remote
+}
 
 func infoln(msg string) {
 	log.Println(fmt.Sprintf("\033[1;33m%s\033[0m", msg))
@@ -25,16 +38,18 @@ func errorln(err error) {
 func theStuff() int {
 	infoln("and so it begins...")
 
-	if err := loginToECR(); err != nil {
-		errorln(err)
-		return 1
-	}
+	if isLocal() {
+		if err := loginToECR(); err != nil {
+			errorln(err)
+			return 1
+		}
 
-	if err := buildLambda(); err != nil {
-		errorln(err)
-		return 1
+		if err := buildLambda(); err != nil {
+			errorln(err)
+			return 1
+		}
+		defer removeLambda()
 	}
-	defer removeLambda()
 
 	// ensure from now on ctrl-c kills process
 	captureInterrupt()
@@ -115,7 +130,15 @@ func loginToECR() error {
 }
 
 func main() {
+	flag.BoolVar(&remote, "remote", false, "set to remote if running as CI")
+	flag.Parse()
+
 	PWD = os.Getenv("PWD")
+	HOME = os.Getenv("HOME")
+	if isRemote() {
+		HOME = "/usr/local"
+	}
+
 	os.Exit(theStuff())
 }
 

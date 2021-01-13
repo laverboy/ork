@@ -63,8 +63,8 @@ func NewRunTestDockerCMD(networkName string) *exec.Cmd {
 		sshDir = sshKeyLocation
 	}
 
-	goDir := fmt.Sprintf("%s/go", os.Getenv("HOME"))
-	goCacheDir := fmt.Sprintf("%s/go-cache", os.Getenv("HOME"))
+	goDir := fmt.Sprintf("%s/go", HOME)
+	goCacheDir := fmt.Sprintf("%s/go-cache", HOME)
 
 	return exec.Command("docker", "run", "--rm",
 		"--network", networkName,
