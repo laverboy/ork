@@ -14,20 +14,24 @@ import (
 
 var PWD string
 
-func info(msg string) {
+func infoln(msg string) {
 	log.Println(fmt.Sprintf("\033[1;33m%s\033[0m", msg))
 }
 
+func errorln(err error) {
+	log.Println(fmt.Sprintf("\033[1;31m%s\033[0m", err))
+}
+
 func theStuff() int {
-	info("and so it begins...")
+	infoln("and so it begins...")
 
 	if err := loginToECR(); err != nil {
-		fmt.Println(err)
+		errorln(err)
 		return 1
 	}
 
 	if err := buildLambda(); err != nil {
-		fmt.Println(err, "buildLambda")
+		errorln(err)
 		return 1
 	}
 	defer removeLambda()
@@ -40,56 +44,56 @@ func theStuff() int {
 
 	// create docker network
 	if err := createNetwork(networkName); err != nil {
-		fmt.Println(err)
+		errorln(err)
 		return 2
 	}
 	defer removeNetwork(networkName)
 
 	if err := getLocalStackWait(); err != nil {
-		fmt.Println(err)
+		errorln(err)
 		return 2
 	}
 	defer removeLocalStackWait()
 
-	info("starting localstack...")
+	infoln("starting localstack...")
 	out, err := NewLocalStackDockerCMD(networkName).CombinedOutput()
 	if err != nil {
-		fmt.Printf("unable to get localstack-wait: %v, \noutput:\n%s", err, out)
+		errorln(fmt.Errorf("unable to get localstack-wait: %v, \noutput:\n%s", err, out))
 		return 3
 	}
 	var localStackContainerID = strings.TrimSpace(string(out))
 	defer killLocalStackContainer(localStackContainerID)
 
-	info("waiting for localstack to be ready...")
+	infoln("waiting for localstack to be ready...")
 	out, err = NewWaitForLocalStackDockerCMD(localStackContainerID).CombinedOutput()
 	if err != nil {
-		fmt.Printf("failed to launch localstack: %v, \noutput:\n%s", err, out)
+		errorln(fmt.Errorf("failed to launch localstack: %v, \noutput:\n%s", err, out))
 		return 5
 	}
 
-	info("running setup...")
+	infoln("running setup...")
 	out, err = NewLocalStackSetupDockerCMD(networkName).CombinedOutput()
 	if err != nil {
-		fmt.Printf("failed to setup localstack: %v, \noutput:\n%s", err, out)
+		errorln(fmt.Errorf("failed to setup localstack: %v, \noutput:\n%s", err, out))
 		return 7
 	}
 	fmt.Printf("localstack setup successfully: \n%s", out)
 
-	info("running test...")
+	infoln("running test...")
 	out, err = NewRunTestDockerCMD(networkName).CombinedOutput()
 	if err != nil {
-		fmt.Printf("test failed or errored: %v, \noutput:\n%s", err, out)
+		errorln(fmt.Errorf("test failed or errored: %v, \noutput:\n%s", err, out))
 		return 8
 	}
 
-	info("localstack logs...")
+	infoln("localstack logs...")
 	logs, _ := exec.Command("docker", "logs", localStackContainerID).CombinedOutput()
-	fmt.Printf("localstack logs: \n%s\n", logs)
+	fmt.Printf("\n%s\n", logs)
 
-	info("test results...")
-	fmt.Printf("test ran successfully: \n%s", out)
+	infoln("test results...")
+	fmt.Printf("\n%s\n", out)
 
-	info("tidy up...")
+	infoln("tidy up...")
 	return 0
 }
 
@@ -98,7 +102,7 @@ func loginToECR() error {
 	cmd := exec.Command("aws", "ecr", "get-login", "--no-include-email", "--region", "eu-west-1")
 	out, err := cmd.CombinedOutput()
 	if err != nil {
-		return fmt.Errorf("unable to get ecr login: error: %s\noutput: %s\n", err, out)
+		return fmt.Errorf("unable to get ecr login: error: %s\noutput: %s\nuse: aws-creds trb-prod\n", err, out)
 	}
 
 	cmd = exec.Command("bash", "-c", string(out))
