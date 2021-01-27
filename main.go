@@ -3,7 +3,6 @@ package main
 import (
 	"flag"
 	"fmt"
-	"log"
 	"ork/utils"
 	"os"
 	"os/exec"
@@ -11,6 +10,12 @@ import (
 	"runtime"
 	"strings"
 	"syscall"
+)
+
+const (
+	red    = "31"
+	yellow = "33"
+	blue   = "34"
 )
 
 var (
@@ -27,16 +32,20 @@ func isLocal() bool {
 	return !remote
 }
 
+func stageln(msg string) {
+	fmt.Println(fmt.Sprintf("\n\033[1;%sm%s\033[0m", yellow, strings.ToUpper(msg)))
+}
+
 func infoln(msg string) {
-	log.Println(fmt.Sprintf("\033[1;33m%s\033[0m", msg))
+	fmt.Println(fmt.Sprintf("\033[1;%sm- %s\033[0m", blue, msg))
 }
 
 func errorln(err error) {
-	log.Println(fmt.Sprintf("\033[1;31m%s\033[0m", err))
+	fmt.Println(fmt.Sprintf("\n\033[1;%sm%s\033[0m", red, err))
 }
 
 func theStuff() int {
-	infoln("and so it begins...")
+	stageln("and so it begins...")
 
 	if isLocal() {
 		if err := loginToECR(); err != nil {
@@ -70,7 +79,7 @@ func theStuff() int {
 	}
 	defer removeLocalStackWait()
 
-	infoln("starting localstack...")
+	stageln("starting localstack...")
 	out, err := NewLocalStackDockerCMD(networkName).CombinedOutput()
 	if err != nil {
 		errorln(fmt.Errorf("unable to get localstack-wait: %v, \noutput:\n%s", err, out))
@@ -79,40 +88,42 @@ func theStuff() int {
 	var localStackContainerID = strings.TrimSpace(string(out))
 	defer killLocalStackContainer(localStackContainerID)
 
-	infoln("waiting for localstack to be ready...")
+	stageln("waiting for localstack to be ready...")
 	out, err = NewWaitForLocalStackDockerCMD(localStackContainerID).CombinedOutput()
 	if err != nil {
 		errorln(fmt.Errorf("failed to launch localstack: %v, \noutput:\n%s", err, out))
 		return 5
 	}
 
-	infoln("running setup...")
+	stageln("running setup...")
 	out, err = NewLocalStackSetupDockerCMD(networkName).CombinedOutput()
 	if err != nil {
 		errorln(fmt.Errorf("failed to setup localstack: %v, \noutput:\n%s", err, out))
 		return 7
 	}
-	fmt.Printf("localstack setup successfully: \n%s", out)
 
-	infoln("running test...")
+	infoln("localstack setup successfully")
+	fmt.Println(string(out))
+
+	stageln("running test...")
 	out, err = NewRunTestDockerCMD(networkName).CombinedOutput()
 	if err != nil {
 		errorln(fmt.Errorf("test failed or errored: %v, \noutput:\n%s", err, out))
 	}
 
-	infoln("localstack logs...")
+	stageln("localstack logs...")
 	logs, _ := exec.Command("docker", "logs", localStackContainerID).CombinedOutput()
 	fmt.Printf("\n%s\n", logs)
 
-	infoln("test results...")
+	stageln("test results...")
 	fmt.Printf("\n%s\n", out)
 
-	infoln("tidy up...")
+	stageln("tidy up...")
 	return 0
 }
 
 func loginToECR() error {
-	fmt.Println("logging in to ecr")
+	infoln("logging in to ecr")
 	cmd := exec.Command("aws", "ecr", "get-login", "--no-include-email", "--region", "eu-west-1")
 	out, err := cmd.CombinedOutput()
 	if err != nil {
@@ -146,7 +157,7 @@ func captureInterrupt() {
 	signal.Notify(c, os.Interrupt, syscall.SIGTERM)
 	go func() {
 		<-c
-		fmt.Println("\r- Ctrl+C pressed in Terminal")
+		infoln("Ctrl+C pressed in Terminal")
 		runtime.Goexit()
 	}()
 }

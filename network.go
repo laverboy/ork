@@ -15,10 +15,10 @@ func createNetwork(name string) error {
 }
 
 func removeNetwork(name string) {
-	fmt.Println("removing network")
+	infoln("removing network")
 	cmd := exec.Command("docker", "network", "rm", name)
 	out, err := cmd.CombinedOutput()
 	if err != nil {
-		fmt.Printf("failed to remove network %s: error: %s\noutput: %s\n", name, err, out)
+		errorln(fmt.Errorf("failed to remove network %s: error: %w\noutput: %s\n", name, err, out))
 	}
 }

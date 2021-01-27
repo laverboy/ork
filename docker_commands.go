@@ -28,17 +28,17 @@ func NewLocalStackDockerCMD(networkName string) *exec.Cmd {
 }
 
 func killLocalStackContainer(id string) {
-	fmt.Println("killing localstack")
+	infoln("killing localstack")
 	cmd := exec.Command("docker", "container", "kill", id)
 	out, err := cmd.CombinedOutput()
 	if err != nil {
-		fmt.Printf("failed to kill container %s: error: %s\noutput: %s\n", id, err, out)
+		errorln(fmt.Errorf("failed to kill container %s: error: %w\noutput: %s\n", id, err, out))
 	}
 
 	cmd = exec.Command("docker", "container", "rm", id)
 	out, err = cmd.CombinedOutput()
 	if err != nil {
-		fmt.Printf("failed to remove container %s: error: %s\noutput: %s\n", id, err, out)
+		errorln(fmt.Errorf("failed to remove container %s: error: %w\noutput: %s\n", id, err, out))
 	}
 }
 

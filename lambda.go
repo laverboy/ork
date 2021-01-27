@@ -3,21 +3,20 @@ package main
 import (
 	"errors"
 	"fmt"
-	"log"
 	"ork/utils"
 	"os"
 	"os/exec"
 )
 
 func removeLambda() {
-	fmt.Println("removing lambda.zip")
+	infoln("removing lambda.zip")
 	if err := os.Remove("lambda.zip"); err != nil {
-		log.Println("unable to remove lambda.zip")
+		errorln(fmt.Errorf("unable to remove lambda.zip: %w", err))
 	}
 }
 
 func buildLambda() error {
-	fmt.Println("building lambda handler")
+	infoln("building lambda handler")
 
 	// if app dir does not exist escape
 	if _, err := os.Stat("../app"); os.IsNotExist(err) {
@@ -34,7 +33,7 @@ func buildLambda() error {
 	}
 
 	// add handler and possibly app/resources and integration-tests/cosmos to zip file
-	fmt.Println("zipping")
+	infoln("zipping")
 	files := []string{"../app/handler"}
 
 	if _, err := os.Stat("../app/resources"); !os.IsNotExist(err) {
@@ -48,7 +47,7 @@ func buildLambda() error {
 	if err := utils.ZipFiles("lambda.zip", files); err != nil {
 		return fmt.Errorf("error zipping files: %w", err)
 	}
-	fmt.Println("zipped")
+	infoln("zipped")
 
 	return nil
 }

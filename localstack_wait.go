@@ -2,15 +2,14 @@ package main
 
 import (
 	"fmt"
-	"log"
 	"os"
 	"os/exec"
 )
 
 func removeLocalStackWait() {
-	fmt.Println("removing localstack-wait")
+	infoln("removing localstack-wait")
 	if err := os.Remove("localstack-wait"); err != nil {
-		log.Println("unable to remove localstack-wait")
+		errorln(fmt.Errorf("unable to remove localstack-wait: %w", err))
 	}
 }
 
