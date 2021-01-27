@@ -98,7 +98,6 @@ func theStuff() int {
 	out, err = NewRunTestDockerCMD(networkName).CombinedOutput()
 	if err != nil {
 		errorln(fmt.Errorf("test failed or errored: %v, \noutput:\n%s", err, out))
-		return 8
 	}
 
 	infoln("localstack logs...")
