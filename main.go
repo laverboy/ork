@@ -3,19 +3,15 @@ package main
 import (
 	"flag"
 	"fmt"
-	"ork/utils"
+	"math/rand"
+	u "ork/utils"
 	"os"
 	"os/exec"
 	"os/signal"
 	"runtime"
 	"strings"
 	"syscall"
-)
-
-const (
-	red    = "31"
-	yellow = "33"
-	blue   = "34"
+	"time"
 )
 
 var (
@@ -32,111 +28,84 @@ func isLocal() bool {
 	return !remote
 }
 
-func stageln(msg string) {
-	fmt.Println(fmt.Sprintf("\n\033[1;%sm%s\033[0m", yellow, strings.ToUpper(msg)))
-}
-
-func infoln(msg string) {
-	fmt.Println(fmt.Sprintf("\033[1;%sm- %s\033[0m", blue, msg))
-}
-
-func errorln(err error) {
-	fmt.Println(fmt.Sprintf("\n\033[1;%sm%s\033[0m", red, err))
-}
-
 func theStuff() int {
-	stageln("and so it begins...")
+	rand.Seed(time.Now().UnixNano())
+	// ensure from now on ctrl-c kills process
+	captureInterrupt()
+
+	u.PrintStage(u.Opening())
+	defer u.PrintStage(u.Closing())
 
 	if isLocal() {
-		if err := loginToECR(); err != nil {
-			errorln(err)
+		if err := u.LoginToECR(); err != nil {
+			u.PrintError(err)
 			return 1
 		}
 
 		if err := buildLambda(); err != nil {
-			errorln(err)
+			u.PrintError(err)
 			return 1
 		}
 		defer removeLambda()
 	}
 
-	// ensure from now on ctrl-c kills process
-	captureInterrupt()
-
 	// create random network to hold it all together
-	networkName := utils.RandomHex(4)
+	networkName := u.RandomHex(4)
 
 	// create docker network
 	if err := createNetwork(networkName); err != nil {
-		errorln(err)
+		u.PrintError(err)
 		return 2
 	}
 	defer removeNetwork(networkName)
 
 	if err := getLocalStackWait(); err != nil {
-		errorln(err)
+		u.PrintError(err)
 		return 2
 	}
 	defer removeLocalStackWait()
 
-	stageln("starting localstack...")
+	u.PrintStage("starting localstack...")
 	out, err := NewLocalStackDockerCMD(networkName).CombinedOutput()
 	if err != nil {
-		errorln(fmt.Errorf("unable to get localstack-wait: %v, \noutput:\n%s", err, out))
+		u.PrintError(fmt.Errorf("unable to get localstack-wait: %v, \noutput:\n%s", err, out))
 		return 3
 	}
 	var localStackContainerID = strings.TrimSpace(string(out))
 	defer killLocalStackContainer(localStackContainerID)
 
-	stageln("waiting for localstack to be ready...")
+	u.PrintStage("waiting for localstack to be ready...")
 	out, err = NewWaitForLocalStackDockerCMD(localStackContainerID).CombinedOutput()
 	if err != nil {
-		errorln(fmt.Errorf("failed to launch localstack: %v, \noutput:\n%s", err, out))
+		u.PrintError(fmt.Errorf("failed to launch localstack: %v, \noutput:\n%s", err, out))
 		return 5
 	}
 
-	stageln("running setup...")
+	u.PrintStage("running setup...")
 	out, err = NewLocalStackSetupDockerCMD(networkName).CombinedOutput()
 	if err != nil {
-		errorln(fmt.Errorf("failed to setup localstack: %v, \noutput:\n%s", err, out))
+		u.PrintError(fmt.Errorf("failed to setup localstack: %v, \noutput:\n%s", err, out))
 		return 7
 	}
 
-	infoln("localstack setup successfully")
+	u.PrintInfo("localstack setup successfully")
 	fmt.Println(string(out))
 
-	stageln("running test...")
+	u.PrintStage("running test...")
 	out, err = NewRunTestDockerCMD(networkName).CombinedOutput()
 	if err != nil {
-		errorln(fmt.Errorf("test failed or errored: %v, \noutput:\n%s", err, out))
+		u.PrintError(fmt.Errorf("test failed or errored: %v, \noutput:\n%s", err, out))
 	}
 
-	stageln("localstack logs...")
+	u.PrintStage("localstack logs...")
 	logs, _ := exec.Command("docker", "logs", localStackContainerID).CombinedOutput()
 	fmt.Printf("\n%s\n", logs)
 
-	stageln("test results...")
+	u.PrintStage("test results...")
 	fmt.Printf("\n%s\n", out)
 
-	stageln("tidy up...")
+	u.PrintStage("tidy up...")
 	return 0
-}
-
-func loginToECR() error {
-	infoln("logging in to ecr")
-	cmd := exec.Command("aws", "ecr", "get-login", "--no-include-email", "--region", "eu-west-1")
-	out, err := cmd.CombinedOutput()
-	if err != nil {
-		return fmt.Errorf("unable to get ecr login: error: %s\noutput: %s\nuse: aws-creds trb-prod\n", err, out)
-	}
-
-	cmd = exec.Command("bash", "-c", string(out))
-	out, err = cmd.CombinedOutput()
-	if err != nil {
-		return fmt.Errorf("unable to login to ecr: error: %s\noutput: %s\n", err, out)
-	}
-
-	return nil
 }
 
 func main() {
@@ -157,7 +126,7 @@ func captureInterrupt() {
 	signal.Notify(c, os.Interrupt, syscall.SIGTERM)
 	go func() {
 		<-c
-		infoln("Ctrl+C pressed in Terminal")
+		u.PrintInfo("Ctrl+C pressed in Terminal")
 		runtime.Goexit()
 	}()
 }

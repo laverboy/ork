@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	u "ork/utils"
 	"os/exec"
 )
 
@@ -15,10 +16,10 @@ func createNetwork(name string) error {
 }
 
 func removeNetwork(name string) {
-	infoln("removing network")
+	u.PrintInfo("removing network")
 	cmd := exec.Command("docker", "network", "rm", name)
 	out, err := cmd.CombinedOutput()
 	if err != nil {
-		errorln(fmt.Errorf("failed to remove network %s: error: %w\noutput: %s\n", name, err, out))
+		u.PrintError(fmt.Errorf("failed to remove network %s: error: %w\noutput: %s\n", name, err, out))
 	}
 }

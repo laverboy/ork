@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	u "ork/utils"
 	"os"
 	"os/exec"
 )
@@ -28,17 +29,17 @@ func NewLocalStackDockerCMD(networkName string) *exec.Cmd {
 }
 
 func killLocalStackContainer(id string) {
-	infoln("killing localstack")
+	u.PrintInfo("killing localstack")
 	cmd := exec.Command("docker", "container", "kill", id)
 	out, err := cmd.CombinedOutput()
 	if err != nil {
-		errorln(fmt.Errorf("failed to kill container %s: error: %w\noutput: %s\n", id, err, out))
+		u.PrintError(fmt.Errorf("failed to kill container %s: error: %w\noutput: %s\n", id, err, out))
 	}
 
 	cmd = exec.Command("docker", "container", "rm", id)
 	out, err = cmd.CombinedOutput()
 	if err != nil {
-		errorln(fmt.Errorf("failed to remove container %s: error: %w\noutput: %s\n", id, err, out))
+		u.PrintError(fmt.Errorf("failed to remove container %s: error: %w\noutput: %s\n", id, err, out))
 	}
 }
 
